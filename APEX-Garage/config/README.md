@@ -1,4 +1,4 @@
-# val-garage config structure
+# APEX-Garage config structure
 
 - `core/`
   - `main.lua`: global tuning, marker defaults, dimensions, misc behavior.

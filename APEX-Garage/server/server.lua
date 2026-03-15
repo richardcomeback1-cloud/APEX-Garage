@@ -3,10 +3,14 @@ local ResourceName = GetCurrentResourceName()
 
 local ReloadCacheMs = tonumber(Config and Config.Performance and Config.Performance.ReloadCacheMs) or 3000
 local DamageFlushIntervalMs = tonumber(Config and Config.Performance and Config.Performance.DamageFlushIntervalMs) or 1000
+local ReloadDispatchCooldownMs = tonumber(Config and Config.Performance and Config.Performance.ReloadDispatchCooldownMs) or 350
 
 local ownerVehicleCache = {}
 local plateOwnerMap = {}
 local pendingDamageUpdates = {}
+local poundBroadcastCooldowns = {}
+local reloadDispatchAt = {}
+local PoundBroadcastCooldownMs = tonumber(Config and Config.Performance and Config.Performance.PoundBroadcastCooldownMs) or 1500
 
 CreateThread(function()
     if ESX then return end
@@ -169,7 +173,7 @@ local function sendWebhook(url, title, description, color)
     if not url or url == '' then return end
 
     local body = {
-        username = 'val-garage',
+        username = 'APEX-Garage',
         embeds = {
             {
                 title = title,
@@ -217,6 +221,13 @@ end)
 RegisterServerEvent(ResourceName..':reloadData')
 AddEventHandler(ResourceName..':reloadData', function()
     local src = source
+    local now = GetGameTimer()
+    local nextAllowed = reloadDispatchAt[src] or 0
+    if now < nextAllowed then
+        return
+    end
+    reloadDispatchAt[src] = now + ReloadDispatchCooldownMs
+
     local xPlayer = getPlayer(src)
     if not xPlayer then return end
 
@@ -282,7 +293,16 @@ end)
 RegisterServerEvent(ResourceName..':deletePoundVehicle')
 AddEventHandler(ResourceName..':deletePoundVehicle', function(plate)
     if type(plate) ~= 'string' or plate == '' then return end
-    TriggerClientEvent(ResourceName..':deletePoundVehicleAll', -1, plate)
+
+    local normalizedPlate = normalizePlate(plate)
+    local now = GetGameTimer()
+    local nextAllowed = poundBroadcastCooldowns[normalizedPlate] or 0
+    if now < nextAllowed then
+        return
+    end
+
+    poundBroadcastCooldowns[normalizedPlate] = now + PoundBroadcastCooldownMs
+    TriggerClientEvent(ResourceName..':deletePoundVehicleAll', -1, normalizedPlate)
 end)
 
 RegisterServerEvent(ResourceName..':openTrunk')
@@ -323,6 +343,19 @@ CreateThread(function()
     while true do
         Wait(DamageFlushIntervalMs)
         flushPendingDamage()
+
+        local now = GetGameTimer()
+        for plate, readyAt in pairs(poundBroadcastCooldowns) do
+            if now >= (tonumber(readyAt) or 0) then
+                poundBroadcastCooldowns[plate] = nil
+            end
+        end
+
+        for src, readyAt in pairs(reloadDispatchAt) do
+            if now >= (tonumber(readyAt) or 0) then
+                reloadDispatchAt[src] = nil
+            end
+        end
     end
 end)
 

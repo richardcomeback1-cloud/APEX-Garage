@@ -21,7 +21,7 @@ let spawnProgressInterval = null;
 // ============================================
 
 function GetParentResourceName() {
-    return 'val-garage';
+    return 'APEX-Garage';
 }
 
 function getPosition(element) {

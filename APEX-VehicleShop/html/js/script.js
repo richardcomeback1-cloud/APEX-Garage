@@ -1,9 +1,9 @@
 // ============================================
 // VAL VEHICLE SHOP - MAIN SCRIPT
-// Modern UI - Matching val-garage theme
+// Modern UI - Matching APEX-Garage theme
 // ============================================
 
-var RESOURCE_NAME = window.RESOURCE_NAME || (typeof GetParentResourceName === 'function' ? GetParentResourceName() : 'val-vehicleshop');
+var RESOURCE_NAME = window.RESOURCE_NAME || (typeof GetParentResourceName === 'function' ? GetParentResourceName() : 'APEX-VehicleShop');
 window.RESOURCE_NAME = RESOURCE_NAME;
 
 // ============================================

@@ -1,6 +1,6 @@
 local ESX = nil
 local Val = GetCurrentResourceName()
-local CALLBACK_NAMESPACE = 'val-vehicleshop'
+local CALLBACK_NAMESPACE = 'APEX-VehicleShop'
 
 local function fetchESX()
     if ESX then return ESX end
@@ -44,14 +44,27 @@ local vehicleConfigIndex = nil
 local plateTakenCache = {}
 local buyCooldowns = {}
 local saveOwnedCooldowns = {}
+local playerCache = {}
+local PLAYER_CACHE_TTL_MS = tonumber((Config and Config.Security and Config.Security.PlayerCacheTtlMs) or 1000) or 1000
 
 local webhookQueue = {}
 local webhookQueueHead = 1
 local webhookQueueTail = 0
 local webhookQueueInFlight = false
 local webhookQueueDirty = false
+local webhookPersistScheduled = false
 
 local sendPurchaseWebhook
+local pruneStateTables
+local invalidatePlayerCache
+local upsertAttemptIndex = 1
+
+local Modules = VehicleShopModules or {}
+local PlayerModule = Modules.Player or {}
+local InventoryModule = Modules.Inventory or {}
+local EconomyModule = Modules.Economy or {}
+local JobsModule = Modules.Jobs or {}
+local UiModule = Modules.UI or {}
 
 local function collectShopPoints(shop)
     local points = {}
@@ -119,6 +132,7 @@ local function clearPlayerState(src)
     testDriveCooldowns[src] = nil
     buyCooldowns[src] = nil
     saveOwnedCooldowns[src] = nil
+    invalidatePlayerCache(src)
 end
 
 local function enterTestBucket(src)
@@ -156,19 +170,15 @@ local function vehCfg(model)
 end
 
 local function canAfford(xPlayer, payment, amount)
-    if payment == 'cash' or payment == 'money' then
-        return xPlayer.getAccount('money').money >= amount
-    elseif payment == 'bank' then
-        return xPlayer.getAccount('bank').money >= amount
+    if EconomyModule.canAfford then
+        return EconomyModule.canAfford(xPlayer, payment, amount)
     end
     return false
 end
 
 local function removeMoney(xPlayer, payment, amount)
-    if payment == 'cash' or payment == 'money' then
-        xPlayer.removeAccountMoney('money', amount)
-    elseif payment == 'bank' then
-        xPlayer.removeAccountMoney('bank', amount)
+    if EconomyModule.removeMoney then
+        EconomyModule.removeMoney(xPlayer, payment, amount)
     end
 end
 
@@ -190,6 +200,21 @@ local function isOnCooldown(map, key, cooldownMs)
     end
     map[key] = now + (tonumber(cooldownMs) or 0)
     return false
+end
+
+local function getPlayerCached(src)
+    fetchESX()
+    if PlayerModule.getCached then
+        return PlayerModule.getCached(ESX, src, PLAYER_CACHE_TTL_MS)
+    end
+    return ESX.GetPlayerFromId(src)
+end
+
+invalidatePlayerCache = function(src)
+    if PlayerModule.invalidate then
+        PlayerModule.invalidate(src)
+    end
+    playerCache[src] = nil
 end
 
 local function getPlateOwnerCached(compact)
@@ -231,6 +256,7 @@ end
 
 local function cbIsPlateTaken(source, cb, plate)
     fetchESX()
+    pruneStateTables(false)
 
     local compact = compactPlate(plate)
     if compact == '' then
@@ -244,7 +270,8 @@ end
 
 local function cbBuyVehicle(source, cb, model, price, payment)
     fetchESX()
-    local xPlayer = ESX.GetPlayerFromId(source)
+    pruneStateTables(false)
+    local xPlayer = getPlayerCached(source)
     if not xPlayer then cb(false) return end
 
     if isOnCooldown(buyCooldowns, source, BUY_COOLDOWN_MS) then
@@ -262,10 +289,9 @@ local function cbBuyVehicle(source, cb, model, price, payment)
     local amount = tonumber(cfg.price or 0) or 0
     if amount <= 0 then cb(false) return end
 
-    if cfg.category == 'ambulance' or cfg.category == 'police' or cfg.category == 'council' then
-        if xPlayer.job.name ~= cfg.category then cb(false) return end
-        local grade = tonumber(cfg.grade or 0) or 0
-        if (xPlayer.job.grade or 0) < grade then cb(false) return end
+    if JobsModule.canAccessVehicle and (not JobsModule.canAccessVehicle(xPlayer, cfg)) then
+        cb(false)
+        return
     end
 
     if not canAfford(xPlayer, payment, amount) then cb(false) return end
@@ -309,13 +335,11 @@ AddEventHandler(Val .. ':Vehicle:Test', function(carname)
 
     if not findShopInRange(src, SHOP_INTERACTION_MAX_DISTANCE) then return end
 
-    local xPlayer = ESX.GetPlayerFromId(src)
+    local xPlayer = getPlayerCached(src)
     if not xPlayer then return end
 
-    if cfg.category == 'ambulance' or cfg.category == 'police' or cfg.category == 'council' then
-        if xPlayer.job.name ~= cfg.category then return end
-        local grade = tonumber(cfg.grade or 0) or 0
-        if (xPlayer.job.grade or 0) < grade then return end
+    if JobsModule.canAccessVehicle and (not JobsModule.canAccessVehicle(xPlayer, cfg)) then
+        return
     end
 
     local now = GetGameTimer()
@@ -339,6 +363,7 @@ end)
 
 AddEventHandler('playerDropped', function()
     clearPlayerState(source)
+    pruneStateTables(true)
 end)
 
 AddEventHandler('onResourceStop', function(resourceName)
@@ -347,50 +372,63 @@ AddEventHandler('onResourceStop', function(resourceName)
     for src in pairs(activeTestBuckets) do
         clearPlayerState(src)
     end
+    pruneStateTables(true)
 end)
 
-CreateThread(function()
-    while true do
-        Wait(10000)
-        local now = GetGameTimer()
+local lastPruneAt = 0
+pruneStateTables = function(force)
+    local now = GetGameTimer()
+    if not force and (now - lastPruneAt) < 2000 then
+        return
+    end
+    lastPruneAt = now
 
-        for src, ticket in pairs(purchaseTickets) do
-            if now > (tonumber(ticket.expiresAt) or 0) then
-                purchaseTickets[src] = nil
-            end
+    for src, ticket in pairs(purchaseTickets) do
+        if now > (tonumber(ticket.expiresAt) or 0) then
+            purchaseTickets[src] = nil
         end
+    end
 
-        for src, ticket in pairs(webhookTickets) do
-            if now > (tonumber(ticket.expiresAt) or 0) then
-                webhookTickets[src] = nil
-            end
+    for src, ticket in pairs(webhookTickets) do
+        if now > (tonumber(ticket.expiresAt) or 0) then
+            webhookTickets[src] = nil
         end
+    end
 
-        for src, request in pairs(pendingWebhookRequests) do
-            if now > (tonumber(request.expiresAt) or 0) then
-                pendingWebhookRequests[src] = nil
-            end
+    for src, request in pairs(pendingWebhookRequests) do
+        if now > (tonumber(request.expiresAt) or 0) then
+            pendingWebhookRequests[src] = nil
         end
+    end
 
-        for compact, data in pairs(plateTakenCache) do
-            if not data or now > (tonumber(data.expiresAt) or 0) then
-                plateTakenCache[compact] = nil
-            end
+    for compact, data in pairs(plateTakenCache) do
+        if not data or now > (tonumber(data.expiresAt) or 0) then
+            plateTakenCache[compact] = nil
         end
+    end
 
-        for src, readyAt in pairs(buyCooldowns) do
-            if now > ((tonumber(readyAt) or 0) + 15000) then
-                buyCooldowns[src] = nil
-            end
+    for src, readyAt in pairs(buyCooldowns) do
+        if now > ((tonumber(readyAt) or 0) + 15000) then
+            buyCooldowns[src] = nil
         end
+    end
 
-        for src, readyAt in pairs(saveOwnedCooldowns) do
-            if now > ((tonumber(readyAt) or 0) + 15000) then
-                saveOwnedCooldowns[src] = nil
+    for src, readyAt in pairs(saveOwnedCooldowns) do
+        if now > ((tonumber(readyAt) or 0) + 15000) then
+            saveOwnedCooldowns[src] = nil
+        end
+    end
+
+    if PlayerModule.prune then
+        PlayerModule.prune()
+    else
+        for src, cached in pairs(playerCache) do
+            if not cached or now > (tonumber(cached.expiresAt) or 0) then
+                playerCache[src] = nil
             end
         end
     end
-end)
+end
 
 local function upsertOwnedVehicle(identifier, plate, vehicleJson, vehicleType, jobName, vehicleName, healthVehicleJson)
     local isJobVehicle = jobName == 'ambulance' or jobName == 'police' or jobName == 'council'
@@ -439,11 +477,15 @@ local function upsertOwnedVehicle(identifier, plate, vehicleJson, vehicleType, j
         }
     }
 
-    for i = 1, #attempts do
+    local startIndex = math.max(1, math.min(#attempts, upsertAttemptIndex or 1))
+
+    for offset = 0, (#attempts - 1) do
+        local i = ((startIndex + offset - 1) % #attempts) + 1
         local ok = pcall(function()
             MySQL.insert.await(attempts[i].sql, attempts[i].params)
         end)
         if ok then
+            upsertAttemptIndex = i
             return true
         end
     end
@@ -474,10 +516,17 @@ local function buildGarageVehiclePayload(cfg, vehicleProps, plate, vehicleJson)
 end
 
 local function syncVehicleToGarage(src, cfg, vehicleProps, plate, vehicleJson)
-    if GetResourceState('val-garage') ~= 'started' then return end
+    if GetResourceState('APEX-Garage') ~= 'started' then return end
 
     local payload = buildGarageVehiclePayload(cfg, vehicleProps, plate, vehicleJson)
-    TriggerClientEvent(Val .. ':Garage:SyncOwnedVehicle', src, payload)
+
+    local ok = pcall(function()
+        exports['APEX-Garage']:SyncOwnedVehicle(src, payload)
+    end)
+
+    if not ok then
+        TriggerClientEvent(Val .. ':Garage:SyncOwnedVehicle', src, payload)
+    end
 end
 
 local function isPlateOwnedByAnother(identifier, plate)
@@ -490,7 +539,8 @@ end
 
 local function saveOwnedVehicle(src, vehicleProps, purchaseModel)
     fetchESX()
-    local xPlayer = ESX.GetPlayerFromId(src)
+    pruneStateTables(false)
+    local xPlayer = getPlayerCached(src)
     if not xPlayer then return false end
     if type(vehicleProps) ~= 'table' then return false end
 
@@ -594,33 +644,24 @@ end
 
 
 local function getSteamIdentifier(xPlayer)
-    local ids = xPlayer.getIdentifiers and xPlayer.getIdentifiers() or GetPlayerIdentifiers(xPlayer.source)
-    if ids then
-        for _, id in pairs(ids) do
-            if type(id) == 'string' and id:sub(1, 6) == 'steam:' then
-                return id
-            end
-        end
+    if PlayerModule.getSteamIdentifier then
+        return PlayerModule.getSteamIdentifier(xPlayer)
     end
     return 'N/A'
 end
 
 local function getDiscordIdentifier(xPlayer)
-    local ids = xPlayer.getIdentifiers and xPlayer.getIdentifiers() or GetPlayerIdentifiers(xPlayer.source)
-    if ids then
-        for _, id in pairs(ids) do
-            if type(id) == 'string' and id:sub(1, 8) == 'discord:' then
-                return id
-            end
-        end
+    if PlayerModule.getDiscordIdentifier then
+        return PlayerModule.getDiscordIdentifier(xPlayer)
     end
     return 'N/A'
 end
 
 local function getDiscordUserId(discordIdentifier)
-    local raw = tostring(discordIdentifier or '')
-    local discordId = raw:match('^discord:(%d+)$')
-    return discordId or 'N/A'
+    if PlayerModule.getDiscordUserId then
+        return PlayerModule.getDiscordUserId(discordIdentifier)
+    end
+    return 'N/A'
 end
 
 local function resolveWebhookUrl()
@@ -663,12 +704,26 @@ local function persistWebhookQueue()
     end
 end
 
+local function scheduleWebhookPersist()
+    if webhookPersistScheduled then return end
+    webhookPersistScheduled = true
+
+    SetTimeout(1500, function()
+        webhookPersistScheduled = false
+        if webhookQueueDirty then
+            persistWebhookQueue()
+            webhookQueueDirty = false
+        end
+    end)
+end
+
 local function enqueueWebhookRequest(item)
     if type(item) ~= 'table' then return end
 
     webhookQueueTail = webhookQueueTail + 1
     webhookQueue[webhookQueueTail] = item
     webhookQueueDirty = true
+    scheduleWebhookPersist()
 
     local qSize = webhookQueueSize()
     if qSize >= WEBHOOK_QUEUE_WARN_SIZE and qSize % 50 == 0 then
@@ -729,7 +784,7 @@ sendPurchaseWebhook = function(src, carKey, plate)
     if url == '' then return end
 
     fetchESX()
-    local xPlayer = ESX.GetPlayerFromId(src)
+    local xPlayer = getPlayerCached(src)
     if not xPlayer then return end
 
     local cfg = vehCfg(carKey) or {}
@@ -742,25 +797,16 @@ sendPurchaseWebhook = function(src, carKey, plate)
     local discordName = GetPlayerName(src) or ('ID '..src)
     local playerName = xPlayer.getName and xPlayer.getName() or discordName
 
-    local embed = {
-        {
-            ["color"] = 0x2ECC71,
-            ["description"] =
-                "**INFORMATION - ข้อมูล**\n" ..
-                "Name : `" .. playerName .. "`\n" ..
-                "Discord Name : `" .. discordName .. "`\n" ..
-                "Discord Identifier : `" .. (discordUserId ~= 'N/A' and discordUserId or discordIdentifier) .. "`\n" ..
-                "SteamID : `" .. steamId .. "`\n\n" ..
-                "**VEHICLE - ข้อมูลรถ**\n" ..
-                "Car : `" .. carName .. "`\n" ..
-                "Model : `" .. model .. "`\n" ..
-                "Nameplate : `" .. tostring(plate or 'N/A') .. "`\n" ..
-                "Price : `" .. tostring(price) .. "`",
-            ["footer"] = {
-                ["text"] = "Time • " .. os.date("%d/%m/%Y %I:%M %p")
-            }
-        }
-    }
+    local embed = UiModule.buildPurchaseEmbed and UiModule.buildPurchaseEmbed({
+        playerName = playerName,
+        discordName = discordName,
+        discordIdentifier = (discordUserId ~= 'N/A' and discordUserId or discordIdentifier),
+        steamId = steamId,
+        carName = carName,
+        model = model,
+        plate = tostring(plate or 'N/A'),
+        price = tostring(price)
+    }) or {}
 
     local body = {
         username = "VAL Legacy [LOG]",
@@ -810,12 +856,14 @@ CreateThread(function()
                     webhookQueue = {}
                 end
                 webhookQueueDirty = true
+                scheduleWebhookPersist()
             else
                 item.attempt = (tonumber(item.attempt) or 0) + 1
                 local retryAfterMs = parseRetryAfterMs(headers)
                 local delayMs = nextRetryDelayMs(item.attempt, retryAfterMs)
                 item.nextAttemptAt = GetGameTimer() + delayMs
                 webhookQueueDirty = true
+                scheduleWebhookPersist()
 
                 if item.attempt == 1 or item.attempt % 5 == 0 then
                     print(('[%s] webhook send failed status=%s retry_in=%dms attempt=%d queue=%d'):format(
@@ -835,16 +883,6 @@ CreateThread(function()
     end
 end)
 
-CreateThread(function()
-    while true do
-        Wait(5000)
-        if webhookQueueDirty then
-            persistWebhookQueue()
-            webhookQueueDirty = false
-        end
-    end
-end)
-
 AddEventHandler('onResourceStop', function(resourceName)
     if resourceName ~= Val then return end
     persistWebhookQueue()
@@ -853,6 +891,7 @@ end)
 RegisterNetEvent(Val .. ':logVehiclePurchase')
 AddEventHandler(Val .. ':logVehiclePurchase', function(carKey, plate)
     local src = source
+    pruneStateTables(false)
     local ticket = webhookTickets[src]
 
     local now = GetGameTimer()

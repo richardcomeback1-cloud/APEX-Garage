@@ -685,7 +685,7 @@ local function getGarageVehicleProperties(vehicle)
     if not vehicle or vehicle == 0 then return nil end
 
     local ok, props = pcall(function()
-        return exports['val-garage']:GetVehicleProperties(vehicle)
+        return exports['APEX-Garage']:GetVehicleProperties(vehicle)
     end)
 
     if ok and type(props) == 'table' then
@@ -1149,9 +1149,9 @@ CreateThread(function()
     while true do
         if uiOpen then
             updateCash()
-            Wait(100)
+            Wait(1500)
         else
-            Wait(500)
+            Wait(1000)
         end
     end
 end)

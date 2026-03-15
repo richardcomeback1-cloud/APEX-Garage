@@ -1,3 +1,28 @@
+local shopControlActive = false
+local shopControlThreadStarted = false
+
+local ClientModules = VehicleShopClientModules or {}
+local ClientInventory = ClientModules.Inventory or {}
+local ClientEconomy = ClientModules.Economy or {}
+
+local function ensureShopControlThread()
+	if shopControlThreadStarted then return end
+	shopControlThreadStarted = true
+
+	CreateThread(function()
+		while true do
+			local sleep = 1000
+			if shopControlActive and ValDev.IsInShopMenu then
+				sleep = 0
+				DisableControlAction(0, 75, true)
+				DisableControlAction(27, 75, true)
+				DisplayRadar(false) -- กัน minimap โผล่ตอนนั่งรถพรีวิวในร้าน
+			end
+			Wait(sleep)
+		end
+	end)
+end
+
 function DeleteShopInsideVehicles()
 	while #ValDev.LastVehicles > 0 do
 		local vehicle = ValDev.LastVehicles[1]
@@ -7,14 +32,12 @@ function DeleteShopInsideVehicles()
 end
 
 function DisableKeyInShop()
-	CreateThread(function()
-		while ValDev.IsInShopMenu do
-			Wait(1)
-			DisableControlAction(0, 75,  true)
-			DisableControlAction(27, 75, true)
-			DisplayRadar(false) -- กัน minimap โผล่ตอนนั่งรถพรีวิวในร้าน
-		end
-	end)
+	shopControlActive = true
+	ensureShopControlThread()
+end
+
+function EnableKeyInShop()
+	shopControlActive = false
 end
 
 function WaitForVehicleToLoad(modelHash)
@@ -33,37 +56,23 @@ function WaitForVehicleToLoad(modelHash)
 end
 
 CheckCount = function(item_name)
-	local inventory = ESX.GetPlayerData().inventory
-	for i=1, #inventory do
-	  local item = inventory[i]
-	  	if item_name == item.name then
-			if item.count == 0 then
-				return 0
-			else
-				return item.count
-			end
-		end
-  	end
+	if ClientInventory.countItem then
+		return ClientInventory.countItem(ESX, item_name)
+	end
 	return 0
 end
 
 function GetMoney()
-	local moneyplayer = ESX.GetPlayerData().accounts
-	for key, value in pairs(moneyplayer) do
-		if moneyplayer[key].name == "money" then
-			return moneyplayer[key].money
-		end
+	if ClientEconomy.getCash then
+		return ClientEconomy.getCash(ESX)
 	end
 	return 0
 end
 
 
 function GetBank()
-	local moneyplayer = ESX.GetPlayerData().accounts
-	for key, value in pairs(moneyplayer) do
-		if moneyplayer[key].name == "bank" then
-			return moneyplayer[key].money
-		end
+	if ClientEconomy.getBank then
+		return ClientEconomy.getBank(ESX)
 	end
 	return 0
 end

@@ -17,6 +17,9 @@ ValDev.testcarme = false
 cam = nil
 local num = 0
 
+local ClientModules = VehicleShopClientModules or {}
+local ClientUi = ClientModules.UI or {}
+
 Citizen.CreateThread(function()
 	while ESX == nil do
 		TriggerEvent(Config["BaseServer"]["clinet_shared_obj"], function(obj) ESX = obj end)
@@ -47,7 +50,14 @@ local function Notify(msg, level)
 		end)
 		if ok then return end
 	elseif provider == 'esx' and ESX and ESX.ShowNotification then
+		if ClientUi.notifyByProvider and ClientUi.notifyByProvider(ConfigNotify, ESX, msg, level) then
+			return
+		end
 		ESX.ShowNotification(msg)
+		return
+	end
+
+	if ClientUi.notifyByProvider and ClientUi.notifyByProvider(ConfigNotify, ESX, msg, level) then
 		return
 	end
 end
@@ -63,6 +73,9 @@ end
 
 local function ExitShopUI()
 	if not ValDev.IsInShopMenu then return end
+	if EnableKeyInShop then
+		EnableKeyInShop()
+	end
 	ExecuteCommand('hud')
 	ExecuteCommand('closeminimap')
 	ExecuteCommand('closehudspeed')
@@ -114,28 +127,56 @@ CreateThread(function()
 end)
 
 CreateThread(function()
-	while true do 
-		Wait(1)
-		local player = PlayerPedId()
-		local coords = GetEntityCoords(player)
-		local sleeploop = true
-		for k,v in pairs(Config['ZONE_SHOP']) do 
-			local distance = GetDistanceBetweenCoords(coords, v.ShopEnterShop.Pos, true)
-			if (v.ShopEnterShop.Type ~= -1 and distance < Config.DrawDistance) then
-				DrawMarker(v.ShopEnterShop.Type, v.ShopEnterShop.Pos.x, v.ShopEnterShop.Pos.y, v.ShopEnterShop.Pos.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, v.ShopEnterShop.Size.x, v.ShopEnterShop.Size.y, v.ShopEnterShop.Size.z, v.ShopEnterShop.colormarker.r, v.ShopEnterShop.colormarker.g, v.ShopEnterShop.colormarker.b, v.ShopEnterShop.colormarker.a, false, true, 2, false, false, false, false)
-				sleeploop = false
-			end
-			if distance <= 2 then 
-				sleeploop = false
-				ValDev.indexshop = k
-				if IsControlJustReleased(0, 38) then 
-					OpenShopMenu(v.shop,k)
+	local zoneCache = {}
+	for k, v in pairs(Config['ZONE_SHOP']) do
+		zoneCache[#zoneCache + 1] = {
+			index = k,
+			shop = v.shop,
+			enter = v.ShopEnterShop
+		}
+	end
+
+	while true do
+		local sleep = 1250
+
+		if not ValDev.IsInShopMenu then
+			local player = PlayerPedId()
+			local coords = GetEntityCoords(player)
+			local nearestIndex, nearestShop, nearestDistance = nil, nil, math.huge
+
+			for i = 1, #zoneCache do
+				local zone = zoneCache[i]
+				local enter = zone.enter
+				local distance = #(coords - enter.Pos)
+
+				if distance < nearestDistance then
+					nearestDistance = distance
+					nearestIndex = zone.index
+					nearestShop = zone.shop
+				end
+
+				if enter.Type ~= -1 and distance < Config.DrawDistance then
+					DrawMarker(enter.Type, enter.Pos.x, enter.Pos.y, enter.Pos.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, enter.Size.x, enter.Size.y, enter.Size.z, enter.colormarker.r, enter.colormarker.g, enter.colormarker.b, enter.colormarker.a, false, true, 2, false, false, false, false)
+					sleep = 50
 				end
 			end
+
+			if nearestIndex ~= nil then
+				ValDev.indexshop = nearestIndex
+				if nearestDistance <= 2.0 then
+					sleep = 0
+					if IsControlJustReleased(0, 38) then
+						OpenShopMenu(nearestShop, nearestIndex)
+					end
+				elseif nearestDistance <= (Config.DrawDistance + 25.0) then
+					sleep = math.min(sleep, 300)
+				end
+			end
+		else
+			sleep = 1000
 		end
-		if sleeploop then 
-			Wait(1000)
-		end
+
+		Wait(sleep)
 	end
 end)
 
@@ -463,9 +504,9 @@ exports("CheckInShopCar", CheckInShopCar)
 
 RegisterNetEvent(Val..':Garage:SyncOwnedVehicle')
 AddEventHandler(Val..':Garage:SyncOwnedVehicle', function(garageVehicle)
-	if GetResourceState('val-garage') ~= 'started' then return end
+	if GetResourceState('APEX-Garage') ~= 'started' then return end
 	if type(garageVehicle) ~= 'table' then return end
-	TriggerEvent('val-garage:addVehicle', garageVehicle)
+	TriggerEvent('APEX-Garage:addVehicle', garageVehicle)
 end)
 
 AddEventHandler('onResourceStop', function(resource)
