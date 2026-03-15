@@ -129,10 +129,16 @@ end)
 CreateThread(function()
 	local zoneCache = {}
 	for k, v in pairs(Config['ZONE_SHOP']) do
+		local enterPos = v.ShopEnterShop and v.ShopEnterShop.Pos
+		if enterPos and type(enterPos) == 'table' then
+			enterPos = vector3(enterPos.x + 0.0, enterPos.y + 0.0, enterPos.z + 0.0)
+		end
+
 		zoneCache[#zoneCache + 1] = {
 			index = k,
 			shop = v.shop,
-			enter = v.ShopEnterShop
+			enter = v.ShopEnterShop,
+			enterPos = enterPos
 		}
 	end
 
@@ -147,7 +153,12 @@ CreateThread(function()
 			for i = 1, #zoneCache do
 				local zone = zoneCache[i]
 				local enter = zone.enter
-				local distance = #(coords - enter.Pos)
+				local enterPos = zone.enterPos
+				if not enterPos then
+					goto CONTINUE_ZONE
+				end
+
+				local distance = #(coords - enterPos)
 
 				if distance < nearestDistance then
 					nearestDistance = distance
@@ -156,9 +167,11 @@ CreateThread(function()
 				end
 
 				if enter.Type ~= -1 and distance < Config.DrawDistance then
-					DrawMarker(enter.Type, enter.Pos.x, enter.Pos.y, enter.Pos.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, enter.Size.x, enter.Size.y, enter.Size.z, enter.colormarker.r, enter.colormarker.g, enter.colormarker.b, enter.colormarker.a, false, true, 2, false, false, false, false)
+					DrawMarker(enter.Type, enterPos.x, enterPos.y, enterPos.z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, enter.Size.x, enter.Size.y, enter.Size.z, enter.colormarker.r, enter.colormarker.g, enter.colormarker.b, enter.colormarker.a, false, true, 2, false, false, false, false)
 					sleep = 50
 				end
+
+				::CONTINUE_ZONE::
 			end
 
 			if nearestIndex ~= nil then
