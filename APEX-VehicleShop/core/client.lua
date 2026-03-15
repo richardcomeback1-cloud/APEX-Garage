@@ -127,12 +127,18 @@ CreateThread(function()
 end)
 
 CreateThread(function()
+	local function toVec3(pos)
+		if not pos then return nil end
+		local x, y, z = pos.x, pos.y, pos.z
+		if x == nil or y == nil or z == nil then
+			return nil
+		end
+		return vector3(x + 0.0, y + 0.0, z + 0.0)
+	end
+
 	local zoneCache = {}
 	for k, v in pairs(Config['ZONE_SHOP']) do
-		local enterPos = v.ShopEnterShop and v.ShopEnterShop.Pos
-		if enterPos and type(enterPos) == 'table' then
-			enterPos = vector3(enterPos.x + 0.0, enterPos.y + 0.0, enterPos.z + 0.0)
-		end
+		local enterPos = toVec3(v.ShopEnterShop and v.ShopEnterShop.Pos)
 
 		zoneCache[#zoneCache + 1] = {
 			index = k,
@@ -147,7 +153,11 @@ CreateThread(function()
 
 		if not ValDev.IsInShopMenu then
 			local player = PlayerPedId()
-			local coords = GetEntityCoords(player)
+			local coords = toVec3(GetEntityCoords(player))
+			if not coords then
+				Wait(500)
+				goto CONTINUE_MAIN_LOOP
+			end
 			local nearestIndex, nearestShop, nearestDistance = nil, nil, math.huge
 
 			for i = 1, #zoneCache do
@@ -189,6 +199,7 @@ CreateThread(function()
 			sleep = 1000
 		end
 
+		::CONTINUE_MAIN_LOOP::
 		Wait(sleep)
 	end
 end)
