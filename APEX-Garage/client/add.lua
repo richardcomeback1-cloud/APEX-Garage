@@ -67,6 +67,20 @@ local function getCachedWhitelistDimensions()
     return cachedWhitelistDimensions
 end
 
+local function waitForFirstLoad(timeoutMs)
+    if fistLoad then
+        return true
+    end
+
+    local timeout = tonumber(timeoutMs) or 4000
+    local deadline = GetGameTimer() + timeout
+
+    while (not fistLoad) and GetGameTimer() < deadline do
+        Wait(100)
+    end
+
+    return fistLoad
+end
 
 local locationIndex = {}
 local locationPropspawn = {}
@@ -1114,7 +1128,7 @@ Citizen.CreateThread(function()
                             -- if GetPedInVehicleSeat(GetVehiclePedIsIn(ped), -1) == ped then
                                 if not fistLoad then
                                     TriggerServerEvent(ResourceName..':reloadData')
-                                    while not fistLoad do Wait(0) end
+                                    waitForFirstLoad(4000)
                                 end
                                 -- ผ่านแล้ว ไม่ต้องเช็กซ้ำ
                                 CurrentPoint = 'stored'
@@ -1154,7 +1168,7 @@ Citizen.CreateThread(function()
                             if not fistLoad then
                                 SetNuiFocus(true, true)
                                 TriggerServerEvent(ResourceName..':reloadData')
-                                while not fistLoad do Wait(0) end
+                                waitForFirstLoad(4000)
                             end
                             CurrentPoint = 'garage'
                             CurrentType = Config.garageDetail[lastGarageMarker].vehicletype
@@ -1204,7 +1218,7 @@ Citizen.CreateThread(function()
                                 if not fistLoad then
                                     SetNuiFocus(true, true)
                                     TriggerServerEvent(ResourceName..':reloadData')
-                                    while not fistLoad do Wait(0) end
+                                    waitForFirstLoad(4000)
                                 end
                                 CurrentPoint = 'pound'
                                 CurrentType = poundConfig.vehicletype
@@ -1267,7 +1281,7 @@ function OpenGarageNear(coords)
                 if not fistLoad then
                     SetNuiFocus(true, true)
                     TriggerServerEvent(ResourceName..':reloadData')
-                    while not fistLoad do Wait(0) end
+                    waitForFirstLoad(4000)
                 end
                 local idx = lastDepositMarker
                 local cfg = (idx and Config.depositvehicle[idx]) or nil
@@ -1333,7 +1347,7 @@ CreateThread(function()
                                 dprint("[Deposit] Success: hold E to deposit")
                                 if not fistLoad then
                                     TriggerServerEvent(ResourceName..':reloadData')
-                                    while not fistLoad do Wait(0) end
+                                    waitForFirstLoad(4000)
                                 end
                                 CurrentPoint = 'deposit'
                                 this_GaragePoint = cfg.location
@@ -1344,7 +1358,7 @@ CreateThread(function()
                             if not isStoryDimension(mydimen) then
                                 if not fistLoad then
                                     TriggerServerEvent(ResourceName..':reloadData')
-                                    while not fistLoad do Wait(0) end
+                                    waitForFirstLoad(4000)
                                 end
                                 CurrentPoint = 'deposit'
                                 this_GaragePoint = cfg.location
@@ -1370,7 +1384,7 @@ CreateThread(function()
                             if not fistLoad then
                                 SetNuiFocus(true,true)
                                 TriggerServerEvent(ResourceName..':reloadData')
-                                while not fistLoad do Wait(0) end
+                                waitForFirstLoad(4000)
                             end
                             CurrentPoint      = 'deposit'
                             this_GaragePoint  = cfg.spawnlocation

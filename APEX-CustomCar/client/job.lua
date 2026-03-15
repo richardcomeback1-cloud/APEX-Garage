@@ -50,6 +50,10 @@ AddEventHandler('esx:setMoney', function(money)
     if ESX and ESX.PlayerData then
         ESX.PlayerData.money = PlayerData.money
     end
+
+    if updateCash then
+        updateCash(true)
+    end
 end)
 
 RegisterNetEvent('esx:setAccountMoney')
@@ -69,6 +73,10 @@ AddEventHandler('esx:setAccountMoney', function(account)
 
         if ESX and ESX.PlayerData then
             ESX.PlayerData.money = accountMoney
+        end
+
+        if updateCash then
+            updateCash(true)
         end
     end
 

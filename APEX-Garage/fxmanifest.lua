@@ -2,7 +2,7 @@ fx_version 'cerulean'
 
 game 'gta5'
 
-description 'val-garage'
+description 'APEX-Garage'
 
 version '1.0.0'
 lua54 'yes'
@@ -29,6 +29,7 @@ server_scripts {
 	'config/locations/deposit.lua',
 	'config/ui/vehicle_image.lua',
 	'config/core/webhook.lua',
+	'server/modules/ui.lua',
 	'server/server.lua'
 }
 

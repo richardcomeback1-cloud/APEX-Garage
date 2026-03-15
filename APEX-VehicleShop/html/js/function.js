@@ -3,7 +3,7 @@
 // Legacy support and compatibility
 // ============================================
 
-var RESOURCE_NAME = window.RESOURCE_NAME || (typeof GetParentResourceName === 'function' ? GetParentResourceName() : 'val-vehicleshop');
+var RESOURCE_NAME = window.RESOURCE_NAME || (typeof GetParentResourceName === 'function' ? GetParentResourceName() : 'APEX-VehicleShop');
 window.RESOURCE_NAME = RESOURCE_NAME;
 
 // ============================================
